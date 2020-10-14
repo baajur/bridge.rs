@@ -24,6 +24,7 @@ pub use self::{
     request::{Request, RequestType},
     response::Response,
 };
+use crate::request::Body;
 use reqwest::Url;
 use serde::Serialize;
 
@@ -49,7 +50,10 @@ impl Bridge {
         }
     }
 
-    pub fn request<S: Serialize>(&self, request_type: RequestType<S>) -> Request<S> {
+    pub fn request<S: Serialize, T: Into<Body>>(
+        &self,
+        request_type: RequestType<S, T>,
+    ) -> Request<S, T> {
         Request::new(&self, request_type)
     }
 }
