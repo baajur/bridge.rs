@@ -92,20 +92,22 @@ impl<'a, S: Serialize> Request<'a, S> {
         let mut additional_headers = vec![];
         additional_headers.append(&mut self.custom_headers().to_vec());
         additional_headers.append(&mut self.tracing_headers().to_vec());
-        dbg!(&additional_headers);
         let request_builder = additional_headers
             .iter()
             .fold(request_builder, |request, (name, value)| {
                 request.header(name, value)
             });
 
-        let response = request_builder
-            .body(request.body_as_string()?)
-            .send()
-            .map_err(|e| PrimaBridgeError::HttpError {
-                url: self.get_url(),
-                source: e,
-            })?;
+        let body: reqwest::blocking::Body = request.body()?.into();
+
+        let response =
+            request_builder
+                .body(body)
+                .send()
+                .map_err(|e| PrimaBridgeError::HttpError {
+                    url: self.get_url(),
+                    source: e,
+                })?;
         let status_code = response.status();
         if !self.ignore_status_code && !status_code.is_success() {
             return Err(PrimaBridgeError::WrongStatusCode(
@@ -288,7 +290,7 @@ impl<'a, S: Serialize> Request<'a, S> {
 #[derive(Debug)]
 pub enum RequestType<S: Serialize> {
     GraphQL(GraphQL<S>),
-    Rest(Rest<S>),
+    Rest(Rest),
 }
 
 #[derive(Debug)]
@@ -305,19 +307,46 @@ pub struct GraphQLBody<T> {
 }
 
 #[derive(Debug)]
-pub struct Rest<S: Serialize> {
+pub struct Rest {
     request_id: Uuid,
-    body: Option<RestBody<S>>,
+    body: Option<Body>,
     method: Method,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct RestBody<S: Serialize> {
-    value: S,
+#[derive(Debug, Clone)]
+pub struct Body {
+    inner: Vec<u8>,
 }
 
-impl<S: Serialize> RequestType<S> {
+impl From<Body> for reqwest::blocking::Body {
+    fn from(body: Body) -> Self {
+        Self::from(body.inner)
+    }
+}
+
+impl From<String> for Body {
+    fn from(content: String) -> Self {
+        Self {
+            inner: content.into_bytes(),
+        }
+    }
+}
+
+impl From<&str> for Body {
+    fn from(content: &str) -> Self {
+        Self {
+            inner: content.as_bytes().to_vec(),
+        }
+    }
+}
+
+impl Default for Body {
+    fn default() -> Self {
+        Self { inner: vec![] }
+    }
+}
+
+impl<'a, S: Serialize> RequestType<S> {
     pub fn id(&self) -> Uuid {
         match self {
             RequestType::GraphQL(request) => request.request_id,
@@ -325,10 +354,10 @@ impl<S: Serialize> RequestType<S> {
         }
     }
 
-    pub fn body_as_string(&self) -> PrimaBridgeResult<String> {
+    fn body(&self) -> PrimaBridgeResult<Body> {
         match self {
-            RequestType::GraphQL(request) => Ok(serde_json::to_string(&request.body)?),
-            RequestType::Rest(request) => Ok(serde_json::to_string(&request.body)?),
+            RequestType::GraphQL(request) => Ok(serde_json::to_string(&request.body)?.into()),
+            RequestType::Rest(request) => Ok(request.body.clone().unwrap_or_default()),
         }
     }
 
@@ -353,20 +382,15 @@ impl<S: Serialize> RequestType<S> {
         }
     }
 
-    pub fn rest(body: Option<S>, method: Method) -> Self {
-        let request_id = Uuid::new_v4();
-        match body {
-            None => Self::Rest(Rest {
-                request_id,
-                method,
-                body: None,
-            }),
-            Some(body) => Self::Rest(Rest {
-                request_id,
-                body: Some(RestBody { value: body }),
-                method,
-            }),
-        }
+    pub fn rest<T>(body: Option<T>, method: Method) -> Self
+    where
+        T: Into<Body>,
+    {
+        Self::Rest(Rest {
+            request_id: Uuid::new_v4(),
+            method,
+            body: body.map(Into::into),
+        })
     }
 
     pub fn graphql(query: &str, variables: Option<S>) -> Self {
