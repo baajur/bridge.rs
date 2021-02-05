@@ -1,5 +1,10 @@
 # Changelog
 
+### Unreleased
+#####breaking change
+- opentelemetry updated to version 0.12. **Careful!!!** The opentelemetry version in your project should match the one in this library
+- several dependencies updated    
+
 ### 0.6.0
 #####breaking change
 - bump tokio to 1.0, which brings rustc minimum version to 1.45
